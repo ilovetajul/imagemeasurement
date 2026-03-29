@@ -32,6 +32,8 @@ export const Canvas = forwardRef<any, CanvasProps>(({
   const [currentPoints, setCurrentPoints] = useState<Point[]>([]);
   const [mousePos, setMousePos] = useState<Point | null>(null);
   const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
+  const [calibrationModal, setCalibrationModal] = useState<{p1: Point, p2: Point, pixelDist: number} | null>(null);
+  const [calibrationValue, setCalibrationValue] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<any>(null);
 
@@ -67,19 +69,7 @@ export const Canvas = forwardRef<any, CanvasProps>(({
       const pixelDist = Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
 
       if (mode === 'calibrate') {
-        const realValue = prompt(`Enter real-world length of this segment in ${unit}:`);
-        if (realValue && !isNaN(Number(realValue))) {
-          onAddMeasurement({
-            id: Math.random().toString(36).substr(2, 9),
-            p1,
-            p2,
-            pixelDistance: pixelDist,
-            realDistance: Number(realValue),
-            unit,
-            isReference: true,
-            label: 'Reference'
-          });
-        }
+        setCalibrationModal({ p1, p2, pixelDist });
       } else if (mode === 'measure' && scale) {
         onAddMeasurement({
           id: Math.random().toString(36).substr(2, 9),
@@ -92,6 +82,23 @@ export const Canvas = forwardRef<any, CanvasProps>(({
         });
       }
       setCurrentPoints([]);
+    }
+  };
+
+  const handleCalibrationSubmit = () => {
+    if (calibrationModal && calibrationValue && !isNaN(Number(calibrationValue))) {
+      onAddMeasurement({
+        id: Math.random().toString(36).substr(2, 9),
+        p1: calibrationModal.p1,
+        p2: calibrationModal.p2,
+        pixelDistance: calibrationModal.pixelDist,
+        realDistance: Number(calibrationValue),
+        unit,
+        isReference: true,
+        label: 'Reference'
+      });
+      setCalibrationModal(null);
+      setCalibrationValue("");
     }
   };
 
@@ -124,7 +131,7 @@ export const Canvas = forwardRef<any, CanvasProps>(({
   };
 
   return (
-    <div ref={containerRef} className="w-full h-full bg-zinc-950 overflow-hidden">
+    <div ref={containerRef} className="w-full h-full bg-zinc-950 overflow-hidden relative">
       <Stage
         width={stageSize.width}
         height={stageSize.height}
@@ -181,6 +188,51 @@ export const Canvas = forwardRef<any, CanvasProps>(({
       <div className="absolute bottom-6 right-6 px-3 py-1.5 bg-zinc-900/80 backdrop-blur border border-zinc-800 rounded-full text-[10px] font-mono text-zinc-400 pointer-events-none">
         ZOOM: {(zoom * 100).toFixed(0)}%
       </div>
+
+      {/* Calibration Modal */}
+      {calibrationModal && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-50">
+          <div className="bg-zinc-900 p-6 rounded-xl border border-zinc-800 shadow-2xl w-80">
+            <h3 className="text-lg font-semibold mb-2 text-zinc-100">Calibrate Measurement</h3>
+            <p className="text-sm text-zinc-400 mb-4">Enter the real-world length of the reference line you just drew.</p>
+            <div className="flex items-center gap-3 mb-6">
+              <input
+                type="number"
+                autoFocus
+                value={calibrationValue}
+                onChange={e => setCalibrationValue(e.target.value)}
+                className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-zinc-100 focus:outline-none focus:border-zinc-600"
+                placeholder="e.g. 10"
+                onKeyDown={e => {
+                  if (e.key === 'Enter') handleCalibrationSubmit();
+                  if (e.key === 'Escape') {
+                    setCalibrationModal(null);
+                    setCalibrationValue("");
+                  }
+                }}
+              />
+              <span className="text-zinc-500">{unit}</span>
+            </div>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setCalibrationModal(null);
+                  setCalibrationValue("");
+                }}
+                className="px-4 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-100 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCalibrationSubmit}
+                className="px-4 py-2 text-sm font-medium bg-zinc-100 text-zinc-950 rounded-lg hover:bg-zinc-200 transition-colors"
+              >
+                Calibrate
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 });
