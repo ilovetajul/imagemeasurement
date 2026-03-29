@@ -1,23 +1,31 @@
 import { Measurement, Unit } from '../types';
-import { Trash2, Hash, Ruler } from 'lucide-react';
+import { Trash2, Hash, Ruler, X } from 'lucide-react';
 
 interface ResultsPanelProps {
   measurements: Measurement[];
   onDelete: (id: string) => void;
   unit: Unit;
+  onClose?: () => void;
 }
 
-export function ResultsPanel({ measurements, onDelete, unit }: ResultsPanelProps) {
+export function ResultsPanel({ measurements, onDelete, unit, onClose }: ResultsPanelProps) {
   return (
-    <aside className="w-80 border-l border-zinc-800 bg-zinc-900 flex flex-col z-20">
-      <div className="p-6 border-b border-zinc-800 flex items-center justify-between">
+    <aside className="w-80 h-full border-l border-zinc-800 bg-zinc-900 flex flex-col z-20 shadow-2xl lg:shadow-none">
+      <div className="p-4 lg:p-6 border-b border-zinc-800 flex items-center justify-between">
         <h3 className="font-semibold text-sm flex items-center gap-2">
           <Hash size={16} className="text-zinc-500" />
           Measurements
         </h3>
-        <span className="text-[10px] bg-zinc-800 px-2 py-0.5 rounded-full text-zinc-400">
-          {measurements.length} total
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] bg-zinc-800 px-2 py-0.5 rounded-full text-zinc-400">
+            {measurements.length} total
+          </span>
+          {onClose && (
+            <button onClick={onClose} className="lg:hidden p-2 text-zinc-400 hover:text-zinc-100 -mr-2">
+              <X size={20} />
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto">

@@ -57,6 +57,7 @@ export const Canvas = forwardRef<any, CanvasProps>(({
 
   const handleMouseDown = (e: any) => {
     if (mode === 'pan') return;
+    if (e.evt.touches && e.evt.touches.length > 1) return;
 
     const stage = e.target.getStage();
     const pos = stage.getRelativePointerPosition();
@@ -103,6 +104,7 @@ export const Canvas = forwardRef<any, CanvasProps>(({
   };
 
   const handleMouseMove = (e: any) => {
+    if (e.evt.touches && e.evt.touches.length > 1) return;
     const stage = e.target.getStage();
     const pos = stage.getRelativePointerPosition();
     setMousePos(pos);
@@ -131,12 +133,14 @@ export const Canvas = forwardRef<any, CanvasProps>(({
   };
 
   return (
-    <div ref={containerRef} className="w-full h-full bg-zinc-950 overflow-hidden relative">
+    <div ref={containerRef} className="w-full h-full bg-zinc-950 overflow-hidden relative touch-none">
       <Stage
         width={stageSize.width}
         height={stageSize.height}
         onMouseDown={handleMouseDown}
+        onTouchStart={handleMouseDown}
         onMouseMove={handleMouseMove}
+        onTouchMove={handleMouseMove}
         onWheel={handleWheel}
         draggable={mode === 'pan'}
         scaleX={zoom}

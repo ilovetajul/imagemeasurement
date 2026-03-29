@@ -1,5 +1,5 @@
 import { Unit, Point, Measurement } from '../types';
-import { Upload, Ruler, MousePointer2, Move, Settings2, Info } from 'lucide-react';
+import { Upload, Ruler, MousePointer2, Move, Settings2, Info, X } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 interface SidebarProps {
@@ -12,6 +12,7 @@ interface SidebarProps {
   scale: number | null;
   setScale: (scale: number | null) => void;
   measurements: Measurement[];
+  onClose?: () => void;
 }
 
 export function Sidebar({ 
@@ -23,16 +24,24 @@ export function Sidebar({
   image, 
   scale,
   setScale,
-  measurements
+  measurements,
+  onClose
 }: SidebarProps) {
   return (
-    <aside className="w-72 border-r border-zinc-800 bg-zinc-900 flex flex-col z-20">
-      <div className="p-6 border-b border-zinc-800">
-        <div className="flex items-center gap-2 mb-6">
-          <div className="w-8 h-8 rounded-lg bg-zinc-100 flex items-center justify-center">
-            <Ruler size={18} className="text-zinc-950" />
+    <aside className="w-72 h-full border-r border-zinc-800 bg-zinc-900 flex flex-col z-20 shadow-2xl lg:shadow-none">
+      <div className="p-4 lg:p-6 border-b border-zinc-800">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-zinc-100 flex items-center justify-center">
+              <Ruler size={18} className="text-zinc-950" />
+            </div>
+            <span className="font-bold tracking-tight text-xl">PhotoMeasure</span>
           </div>
-          <span className="font-bold tracking-tight text-xl">PhotoMeasure</span>
+          {onClose && (
+            <button onClick={onClose} className="lg:hidden p-2 text-zinc-400 hover:text-zinc-100 -mr-2">
+              <X size={20} />
+            </button>
+          )}
         </div>
 
         <label className="flex items-center justify-center gap-2 w-full py-2.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg cursor-pointer transition-colors text-sm font-medium">

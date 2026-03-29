@@ -3,8 +3,9 @@ import { Sidebar } from './components/Sidebar';
 import { Canvas } from './components/Canvas';
 import { ResultsPanel } from './components/ResultsPanel';
 import { Measurement, Unit, Point } from './types';
-import { Download, Undo, Redo, Maximize } from 'lucide-react';
+import { Download, Undo, Redo, Maximize, Menu, List, ZoomIn, ZoomOut } from 'lucide-react';
 import { jsPDF } from 'jspdf';
+import { cn } from './lib/utils';
 
 export default function App() {
   const [image, setImage] = useState<string | null>(null);
@@ -16,6 +17,8 @@ export default function App() {
   const [mode, setMode] = useState<'calibrate' | 'measure' | 'pan'>('pan');
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
+  const [showSidebar, setShowSidebar] = useState(false);
+  const [showResults, setShowResults] = useState(false);
 
   const canvasRef = useRef<any>(null);
 
@@ -100,10 +103,22 @@ export default function App() {
   };
 
   return (
-    <div className="flex h-screen bg-zinc-950 text-zinc-100 font-sans overflow-hidden">
+    <div className="flex h-screen bg-zinc-950 text-zinc-100 font-sans overflow-hidden relative">
+      {/* Mobile Overlays */}
+      {(showSidebar || showResults) && (
+        <div 
+          className="fixed inset-0 bg-black/50 z-30 lg:hidden backdrop-blur-sm"
+          onClick={() => { setShowSidebar(false); setShowResults(false); }}
+        />
+      )}
+
       {/* Left Sidebar */}
-      <Sidebar 
-        mode={mode} 
+      <div className={cn(
+        "fixed inset-y-0 left-0 z-40 transform transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0",
+        showSidebar ? "translate-x-0" : "-translate-x-full"
+      )}>
+        <Sidebar 
+          mode={mode} 
         setMode={setMode} 
         unit={unit} 
         setUnit={setUnit}
@@ -112,14 +127,22 @@ export default function App() {
         scale={scale}
         setScale={setScale}
         measurements={measurements}
+        onClose={() => setShowSidebar(false)}
       />
+      </div>
 
       {/* Main Content */}
       <main className="flex-1 relative flex flex-col min-w-0">
-        <header className="h-14 border-b border-zinc-800 flex items-center justify-between px-6 bg-zinc-900/50 backdrop-blur-sm z-10">
-          <div className="flex items-center gap-4">
-            <h1 className="text-lg font-semibold tracking-tight text-zinc-100 italic serif">PhotoMeasure</h1>
-            <div className="h-4 w-px bg-zinc-800" />
+        <header className="h-14 border-b border-zinc-800 flex items-center justify-between px-3 lg:px-6 bg-zinc-900/50 backdrop-blur-sm z-10">
+          <div className="flex items-center gap-2 lg:gap-4">
+            <button 
+              onClick={() => setShowSidebar(true)}
+              className="lg:hidden p-2 text-zinc-400 hover:text-zinc-100"
+            >
+              <Menu size={20} />
+            </button>
+            <h1 className="text-lg font-semibold tracking-tight text-zinc-100 italic serif hidden sm:block">PhotoMeasure</h1>
+            <div className="h-4 w-px bg-zinc-800 hidden sm:block" />
             <div className="flex items-center gap-1">
               <button 
                 onClick={undo} 
@@ -140,28 +163,37 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 lg:gap-3">
             <button 
               onClick={exportAsPNG}
               disabled={!image}
               className="flex items-center gap-2 px-3 py-1.5 bg-zinc-100 text-zinc-950 rounded-md text-sm font-medium hover:bg-zinc-200 disabled:opacity-30 transition-all"
             >
-              <Download size={16} />
-              Export PNG
+              <Download size={16} className="hidden sm:block" />
+              <span className="hidden sm:block">Export PNG</span>
+              <span className="sm:hidden">PNG</span>
             </button>
             <button 
               onClick={exportAsPDF}
               disabled={!image || measurements.length === 0}
               className="flex items-center gap-2 px-3 py-1.5 border border-zinc-700 rounded-md text-sm font-medium hover:bg-zinc-800 disabled:opacity-30 transition-all"
             >
-              Export PDF
+              <span className="hidden sm:block">Export PDF</span>
+              <span className="sm:hidden">PDF</span>
+            </button>
+            <button 
+              onClick={() => setShowResults(true)}
+              className="lg:hidden p-2 text-zinc-400 hover:text-zinc-100 ml-1"
+            >
+              <List size={20} />
             </button>
           </div>
         </header>
 
         <div className="flex-1 relative bg-zinc-950 overflow-hidden">
           {image ? (
-            <Canvas 
+            <>
+              <Canvas 
               ref={canvasRef}
               image={image}
               mode={mode}
@@ -174,8 +206,24 @@ export default function App() {
               pan={pan}
               setPan={setPan}
             />
+            {/* Floating Zoom Controls for Mobile */}
+            <div className="absolute bottom-6 left-6 flex flex-col gap-2 z-10 lg:hidden">
+              <button 
+                onClick={() => setZoom(z => z * 1.2)} 
+                className="p-3 bg-zinc-900/90 backdrop-blur border border-zinc-800 rounded-full text-zinc-100 shadow-lg hover:bg-zinc-800 active:scale-95 transition-all"
+              >
+                <ZoomIn size={20} />
+              </button>
+              <button 
+                onClick={() => setZoom(z => z / 1.2)} 
+                className="p-3 bg-zinc-900/90 backdrop-blur border border-zinc-800 rounded-full text-zinc-100 shadow-lg hover:bg-zinc-800 active:scale-95 transition-all"
+              >
+                <ZoomOut size={20} />
+              </button>
+            </div>
+            </>
           ) : (
-            <div className="absolute inset-0 flex flex-col items-center justify-center p-12 text-center">
+            <div className="absolute inset-0 flex flex-col items-center justify-center p-6 lg:p-12 text-center">
               <div className="w-24 h-24 rounded-full bg-zinc-900 flex items-center justify-center mb-6 border border-zinc-800">
                 <Maximize size={40} className="text-zinc-600" />
               </div>
@@ -193,11 +241,17 @@ export default function App() {
       </main>
 
       {/* Right Sidebar */}
-      <ResultsPanel 
-        measurements={measurements} 
-        onDelete={deleteMeasurement} 
-        unit={unit}
-      />
+      <div className={cn(
+        "fixed inset-y-0 right-0 z-40 transform transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0",
+        showResults ? "translate-x-0" : "translate-x-full"
+      )}>
+        <ResultsPanel 
+          measurements={measurements} 
+          onDelete={deleteMeasurement} 
+          unit={unit}
+          onClose={() => setShowResults(false)}
+        />
+      </div>
     </div>
   );
 }
