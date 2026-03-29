@@ -1,0 +1,5 @@
+{
+  "name": "PhotoMeasure",
+  "description": "Measure real-world dimensions from uploaded images using a reference object for calibration.",
+  "requestFramePermissions": []
+}
