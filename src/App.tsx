@@ -22,6 +22,34 @@ export default function App() {
 
   const canvasRef = useRef<any>(null);
 
+  const handleUnitChange = (newUnit: Unit) => {
+    if (newUnit === unit) return;
+    
+    const toMeters = {
+      inches: 0.0254,
+      feet: 0.3048,
+      cm: 0.01,
+      meters: 1
+    };
+
+    const conversionFactor = toMeters[unit] / toMeters[newUnit];
+
+    if (scale) {
+      setScale(scale / conversionFactor);
+    }
+
+    const convertList = (list: Measurement[]) => list.map(m => ({
+      ...m,
+      realDistance: m.realDistance * conversionFactor,
+      unit: newUnit
+    }));
+
+    setMeasurements(convertList(measurements));
+    setHistory(history.map(convertList));
+    setRedoStack(redoStack.map(convertList));
+    setUnit(newUnit);
+  };
+
   const saveToHistory = useCallback((newMeasurements: Measurement[]) => {
     setHistory(prev => [...prev, measurements]);
     setMeasurements(newMeasurements);
@@ -63,9 +91,21 @@ export default function App() {
 
   const addMeasurement = (m: Measurement) => {
     if (m.isReference) {
-      setScale(m.pixelDistance / m.realDistance);
+      const newScale = m.pixelDistance / m.realDistance;
+      setScale(newScale);
+      
+      // Remove old references and update existing measurements with new scale
+      const updatedMeasurements = measurements
+        .filter(meas => !meas.isReference)
+        .map(meas => ({
+          ...meas,
+          realDistance: meas.pixelDistance / newScale
+        }));
+        
+      saveToHistory([...updatedMeasurements, m]);
+    } else {
+      saveToHistory([...measurements, m]);
     }
-    saveToHistory([...measurements, m]);
   };
 
   const deleteMeasurement = (id: string) => {
@@ -121,7 +161,7 @@ export default function App() {
           mode={mode} 
         setMode={setMode} 
         unit={unit} 
-        setUnit={setUnit}
+        setUnit={handleUnitChange}
         onUpload={handleImageUpload}
         image={image}
         scale={scale}

@@ -36,6 +36,7 @@ export const Canvas = forwardRef<any, CanvasProps>(({
   const [calibrationValue, setCalibrationValue] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<any>(null);
+  const isFittedRef = useRef(false);
 
   useImperativeHandle(ref, () => ({
     toDataURL: () => stageRef.current?.toDataURL({ pixelRatio: 2 }),
@@ -54,6 +55,26 @@ export const Canvas = forwardRef<any, CanvasProps>(({
     window.addEventListener('resize', updateSize);
     return () => window.removeEventListener('resize', updateSize);
   }, []);
+
+  useEffect(() => {
+    isFittedRef.current = false;
+  }, [image]);
+
+  useEffect(() => {
+    if (img && stageSize.width && stageSize.height && !isFittedRef.current) {
+      const scaleX = stageSize.width / img.width;
+      const scaleY = stageSize.height / img.height;
+      const initialScale = Math.min(scaleX, scaleY) * 0.9; // 90% to leave some margin
+      
+      setZoom(initialScale);
+      
+      const panX = (stageSize.width - img.width * initialScale) / 2;
+      const panY = (stageSize.height - img.height * initialScale) / 2;
+      setPan({ x: panX, y: panY });
+      
+      isFittedRef.current = true;
+    }
+  }, [img, stageSize, setZoom, setPan]);
 
   const handleMouseDown = (e: any) => {
     if (mode === 'pan') return;
@@ -110,6 +131,39 @@ export const Canvas = forwardRef<any, CanvasProps>(({
     setMousePos(pos);
   };
 
+  const handleMouseUp = (e: any) => {
+    if (mode === 'pan') return;
+    if (e.evt.touches && e.evt.touches.length > 1) return;
+
+    if (currentPoints.length === 1) {
+      const stage = e.target.getStage();
+      const pos = stage.getRelativePointerPosition();
+      const p1 = currentPoints[0];
+      const p2 = pos;
+      const pixelDist = Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+
+      // If the distance is very small (e.g. < 5 pixels), it was just a tap, wait for second tap
+      if (pixelDist < 5 / zoom) {
+        return;
+      }
+
+      if (mode === 'calibrate') {
+        setCalibrationModal({ p1, p2, pixelDist });
+      } else if (mode === 'measure' && scale) {
+        onAddMeasurement({
+          id: Math.random().toString(36).substr(2, 9),
+          p1,
+          p2,
+          pixelDistance: pixelDist,
+          realDistance: pixelDist / scale,
+          unit,
+          label: `Measurement ${measurements.length + 1}`
+        });
+      }
+      setCurrentPoints([]);
+    }
+  };
+
   const handleWheel = (e: any) => {
     e.evt.preventDefault();
     const scaleBy = 1.1;
@@ -141,6 +195,8 @@ export const Canvas = forwardRef<any, CanvasProps>(({
         onTouchStart={handleMouseDown}
         onMouseMove={handleMouseMove}
         onTouchMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onTouchEnd={handleMouseUp}
         onWheel={handleWheel}
         draggable={mode === 'pan'}
         scaleX={zoom}
