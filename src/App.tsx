@@ -1,296 +1,371 @@
-import { useState, useCallback, useRef } from 'react';
-import { Sidebar } from './components/Sidebar';
-import { Canvas } from './components/Canvas';
-import { ResultsPanel } from './components/ResultsPanel';
-import { Measurement, Unit, Point } from './types';
-import { Download, Undo, Redo, Maximize, Menu, List, ZoomIn, ZoomOut } from 'lucide-react';
-import { jsPDF } from 'jspdf';
+import React, { useState, useRef, useCallback } from 'react';
+import { GoogleGenAI } from '@google/genai';
+import { Upload, Image as ImageIcon, Ruler, Loader2, AlertCircle, RefreshCw } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import ReactMarkdown from 'react-markdown';
 import { cn } from './lib/utils';
 
+const SYSTEM_INSTRUCTION = `You are a precise body measurement assistant. When a user uploads a photo of a person, analyze it and provide estimated measurements.
+
+INSTRUCTIONS:
+- Identify visible body landmarks (top of head, chin, shoulders, waist, knees, feet)
+- Use standard human body proportion ratios:
+  * Total height = face height × 7.5
+  * Shoulder width = total height ÷ 4
+  * Torso (neck to waist) = total height × 0.3
+  * Leg length = total height × 0.47
+- If user provides ONE known measurement (e.g. "face = 22cm"), use it to calculate ALL others
+- Account for camera angle: if shot from below eye level, add 3-7% to lower body
+- Always state confidence level: HIGH / MEDIUM / LOW
+
+OUTPUT FORMAT (in Bengali + English):
+মাথা থেকে থুতনি (Face): X cm
+কাঁধের প্রস্থ (Shoulder): X cm  
+বুকের মাপ (Chest): X cm
+কোমর (Waist): X cm
+মোট উচ্চতা (Height): X cm / X ft X in
+হাতের দৈর্ঘ্য (Arm): X cm
+
+Confidence: [HIGH/MEDIUM/LOW]
+Note: [any important observation about photo angle or quality]
+
+If the photo angle is not straight-on, mention the correction applied.
+Always ask: "কোনো একটি মাপ জানা থাকলে বলুন, আরও নির্ভুল হবে।"`;
+
 export default function App() {
-  const [image, setImage] = useState<string | null>(null);
-  const [scale, setScale] = useState<number | null>(null); // pixels per unit
-  const [unit, setUnit] = useState<Unit>('inches');
-  const [measurements, setMeasurements] = useState<Measurement[]>([]);
-  const [history, setHistory] = useState<Measurement[][]>([]);
-  const [redoStack, setRedoStack] = useState<Measurement[][]>([]);
-  const [mode, setMode] = useState<'calibrate' | 'measure' | 'pan'>('pan');
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
-  const [showSidebar, setShowSidebar] = useState(false);
-  const [showResults, setShowResults] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [knownMeasurement, setKnownMeasurement] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const canvasRef = useRef<any>(null);
-
-  const handleUnitChange = (newUnit: Unit) => {
-    if (newUnit === unit) return;
-    
-    const toMeters = {
-      inches: 0.0254,
-      feet: 0.3048,
-      cm: 0.01,
-      meters: 1
-    };
-
-    const conversionFactor = toMeters[unit] / toMeters[newUnit];
-
-    if (scale) {
-      setScale(scale / conversionFactor);
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = e.target.files?.[0];
+    if (selectedFile) {
+      processFile(selectedFile);
     }
-
-    const convertList = (list: Measurement[]) => list.map(m => ({
-      ...m,
-      realDistance: m.realDistance * conversionFactor,
-      unit: newUnit
-    }));
-
-    setMeasurements(convertList(measurements));
-    setHistory(history.map(convertList));
-    setRedoStack(redoStack.map(convertList));
-    setUnit(newUnit);
   };
 
-  const saveToHistory = useCallback((newMeasurements: Measurement[]) => {
-    setHistory(prev => [...prev, measurements]);
-    setMeasurements(newMeasurements);
-    setRedoStack([]);
-  }, [measurements]);
+  const processFile = (selectedFile: File) => {
+    if (!selectedFile.type.startsWith('image/')) {
+      setError('Please upload a valid image file.');
+      return;
+    }
+    setFile(selectedFile);
+    setPreviewUrl(URL.createObjectURL(selectedFile));
+    setResult(null);
+    setError(null);
+  };
 
-  const undo = useCallback(() => {
-    if (history.length === 0) return;
-    const prev = history[history.length - 1];
-    setRedoStack(prevRedo => [...prevRedo, measurements]);
-    setMeasurements(prev);
-    setHistory(prevHistory => prevHistory.slice(0, -1));
-  }, [history, measurements]);
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  }, []);
 
-  const redo = useCallback(() => {
-    if (redoStack.length === 0) return;
-    const next = redoStack[redoStack.length - 1];
-    setHistory(prevHistory => [...prevHistory, measurements]);
-    setMeasurements(next);
-    setRedoStack(prevRedo => prevRedo.slice(0, -1));
-  }, [redoStack, measurements]);
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  }, []);
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const droppedFile = e.dataTransfer.files?.[0];
+    if (droppedFile) {
+      processFile(droppedFile);
+    }
+  }, []);
+
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload = (event) => {
-        setImage(event.target?.result as string);
-        setMeasurements([]);
-        setScale(null);
-        setHistory([]);
-        setRedoStack([]);
-        setZoom(1);
-        setPan({ x: 0, y: 0 });
-      };
       reader.readAsDataURL(file);
-    }
-  };
-
-  const addMeasurement = (m: Measurement) => {
-    if (m.isReference) {
-      const newScale = m.pixelDistance / m.realDistance;
-      setScale(newScale);
-      
-      // Remove old references and update existing measurements with new scale
-      const updatedMeasurements = measurements
-        .filter(meas => !meas.isReference)
-        .map(meas => ({
-          ...meas,
-          realDistance: meas.pixelDistance / newScale
-        }));
-        
-      saveToHistory([...updatedMeasurements, m]);
-    } else {
-      saveToHistory([...measurements, m]);
-    }
-  };
-
-  const deleteMeasurement = (id: string) => {
-    const m = measurements.find(item => item.id === id);
-    if (m?.isReference) {
-      setScale(null);
-    }
-    saveToHistory(measurements.filter(m => m.id !== id));
-  };
-
-  const exportAsPNG = () => {
-    if (!canvasRef.current) return;
-    const dataUrl = canvasRef.current.toDataURL();
-    const link = document.createElement('a');
-    link.download = 'photomeasure-export.png';
-    link.href = dataUrl;
-    link.click();
-  };
-
-  const exportAsPDF = () => {
-    const doc = new jsPDF();
-    doc.setFontSize(20);
-    doc.text('PhotoMeasure Report', 20, 20);
-    doc.setFontSize(12);
-    doc.text(`Unit: ${unit}`, 20, 30);
-    doc.text(`Scale: ${scale?.toFixed(2)} pixels/${unit}`, 20, 40);
-    
-    let y = 60;
-    measurements.forEach((m, i) => {
-      doc.text(`${i + 1}. ${m.label || 'Measurement'}: ${m.realDistance.toFixed(2)} ${m.unit}`, 20, y);
-      y += 10;
+      reader.onload = () => {
+        if (typeof reader.result === 'string') {
+          const base64String = reader.result.split(',')[1];
+          resolve(base64String);
+        } else {
+          reject(new Error('Failed to convert file to base64'));
+        }
+      };
+      reader.onerror = error => reject(error);
     });
-    
-    doc.save('photomeasure-report.pdf');
+  };
+
+  const analyzeImage = async () => {
+    if (!file) {
+      setError('Please upload an image first.');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const base64Data = await fileToBase64(file);
+      
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      
+      const imagePart = {
+        inlineData: {
+          mimeType: file.type,
+          data: base64Data,
+        },
+      };
+
+      let promptText = 'Please analyze this photo and estimate the body measurements according to the instructions.';
+      if (knownMeasurement.trim()) {
+        promptText += ` The user has provided this known measurement: "${knownMeasurement}". Please use this to calculate all other measurements accurately.`;
+      }
+
+      const textPart = { text: promptText };
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.1-pro-preview',
+        contents: { parts: [imagePart, textPart] },
+        config: {
+          systemInstruction: SYSTEM_INSTRUCTION,
+          temperature: 0.2,
+        },
+      });
+
+      if (response.text) {
+        setResult(response.text);
+      } else {
+        setError('Received an empty response from the AI. Please try again.');
+      }
+    } catch (err) {
+      console.error('Error analyzing image:', err);
+      setError(err instanceof Error ? err.message : 'An unexpected error occurred while analyzing the image.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const reset = () => {
+    setFile(null);
+    setPreviewUrl(null);
+    setResult(null);
+    setError(null);
+    setKnownMeasurement('');
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
   return (
-    <div className="flex h-screen bg-zinc-950 text-zinc-100 font-sans overflow-hidden relative">
-      {/* Mobile Overlays */}
-      {(showSidebar || showResults) && (
-        <div 
-          className="fixed inset-0 bg-black/50 z-30 lg:hidden backdrop-blur-sm"
-          onClick={() => { setShowSidebar(false); setShowResults(false); }}
-        />
-      )}
-
-      {/* Left Sidebar */}
-      <div className={cn(
-        "fixed inset-y-0 left-0 z-40 transform transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0",
-        showSidebar ? "translate-x-0" : "-translate-x-full"
-      )}>
-        <Sidebar 
-          mode={mode} 
-        setMode={setMode} 
-        unit={unit} 
-        setUnit={handleUnitChange}
-        onUpload={handleImageUpload}
-        image={image}
-        scale={scale}
-        setScale={setScale}
-        measurements={measurements}
-        onClose={() => setShowSidebar(false)}
-      />
-      </div>
-
-      {/* Main Content */}
-      <main className="flex-1 relative flex flex-col min-w-0">
-        <header className="h-14 border-b border-zinc-800 flex items-center justify-between px-3 lg:px-6 bg-zinc-900/50 backdrop-blur-sm z-10">
-          <div className="flex items-center gap-2 lg:gap-4">
-            <button 
-              onClick={() => setShowSidebar(true)}
-              className="lg:hidden p-2 text-zinc-400 hover:text-zinc-100"
-            >
-              <Menu size={20} />
-            </button>
-            <h1 className="text-lg font-semibold tracking-tight text-zinc-100 italic serif hidden sm:block">PhotoMeasure</h1>
-            <div className="h-4 w-px bg-zinc-800 hidden sm:block" />
-            <div className="flex items-center gap-1">
-              <button 
-                onClick={undo} 
-                disabled={history.length === 0}
-                className="p-1.5 hover:bg-zinc-800 rounded-md disabled:opacity-30 transition-colors"
-                title="Undo"
-              >
-                <Undo size={18} />
-              </button>
-              <button 
-                onClick={redo} 
-                disabled={redoStack.length === 0}
-                className="p-1.5 hover:bg-zinc-800 rounded-md disabled:opacity-30 transition-colors"
-                title="Redo"
-              >
-                <Redo size={18} />
-              </button>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 lg:gap-3">
-            <button 
-              onClick={exportAsPNG}
-              disabled={!image}
-              className="flex items-center gap-2 px-3 py-1.5 bg-zinc-100 text-zinc-950 rounded-md text-sm font-medium hover:bg-zinc-200 disabled:opacity-30 transition-all"
-            >
-              <Download size={16} className="hidden sm:block" />
-              <span className="hidden sm:block">Export PNG</span>
-              <span className="sm:hidden">PNG</span>
-            </button>
-            <button 
-              onClick={exportAsPDF}
-              disabled={!image || measurements.length === 0}
-              className="flex items-center gap-2 px-3 py-1.5 border border-zinc-700 rounded-md text-sm font-medium hover:bg-zinc-800 disabled:opacity-30 transition-all"
-            >
-              <span className="hidden sm:block">Export PDF</span>
-              <span className="sm:hidden">PDF</span>
-            </button>
-            <button 
-              onClick={() => setShowResults(true)}
-              className="lg:hidden p-2 text-zinc-400 hover:text-zinc-100 ml-1"
-            >
-              <List size={20} />
-            </button>
-          </div>
-        </header>
-
-        <div className="flex-1 relative bg-zinc-950 overflow-hidden">
-          {image ? (
-            <>
-              <Canvas 
-              ref={canvasRef}
-              image={image}
-              mode={mode}
-              scale={scale}
-              unit={unit}
-              measurements={measurements}
-              onAddMeasurement={addMeasurement}
-              zoom={zoom}
-              setZoom={setZoom}
-              pan={pan}
-              setPan={setPan}
-            />
-            {/* Floating Zoom Controls for Mobile */}
-            <div className="absolute bottom-6 left-6 flex flex-col gap-2 z-10 lg:hidden">
-              <button 
-                onClick={() => setZoom(z => z * 1.2)} 
-                className="p-3 bg-zinc-900/90 backdrop-blur border border-zinc-800 rounded-full text-zinc-100 shadow-lg hover:bg-zinc-800 active:scale-95 transition-all"
-              >
-                <ZoomIn size={20} />
-              </button>
-              <button 
-                onClick={() => setZoom(z => z / 1.2)} 
-                className="p-3 bg-zinc-900/90 backdrop-blur border border-zinc-800 rounded-full text-zinc-100 shadow-lg hover:bg-zinc-800 active:scale-95 transition-all"
-              >
-                <ZoomOut size={20} />
-              </button>
-            </div>
-            </>
-          ) : (
-            <div className="absolute inset-0 flex flex-col items-center justify-center p-6 lg:p-12 text-center">
-              <div className="w-24 h-24 rounded-full bg-zinc-900 flex items-center justify-center mb-6 border border-zinc-800">
-                <Maximize size={40} className="text-zinc-600" />
-              </div>
-              <h2 className="text-2xl font-light mb-2">No Image Uploaded</h2>
-              <p className="text-zinc-500 max-w-md mb-8">
-                Upload a photo of an object alongside a reference item (like a ruler or credit card) to start measuring.
-              </p>
-              <label className="cursor-pointer px-6 py-3 bg-zinc-100 text-zinc-950 rounded-full font-medium hover:scale-105 transition-transform">
-                Upload Image
-                <input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} />
-              </label>
-            </div>
-          )}
+    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-blue-200">
+      <div className="max-w-5xl mx-auto px-4 py-12 sm:px-6 lg:px-8">
+        
+        {/* Header */}
+        <div className="text-center mb-12">
+          <motion.div 
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="inline-flex items-center justify-center p-3 bg-blue-100 rounded-full mb-4 text-blue-600"
+          >
+            <Ruler className="w-8 h-8" />
+          </motion.div>
+          <motion.h1 
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1 }}
+            className="text-4xl font-bold tracking-tight text-slate-900 sm:text-5xl mb-3"
+          >
+            Body Measurement Assistant
+          </motion.h1>
+          <motion.p 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.2 }}
+            className="text-lg text-slate-600 max-w-2xl mx-auto"
+          >
+            Upload a full-body photo to get estimated measurements using AI and standard human proportion ratios.
+          </motion.p>
         </div>
-      </main>
 
-      {/* Right Sidebar */}
-      <div className={cn(
-        "fixed inset-y-0 right-0 z-40 transform transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0",
-        showResults ? "translate-x-0" : "translate-x-full"
-      )}>
-        <ResultsPanel 
-          measurements={measurements} 
-          onDelete={deleteMeasurement} 
-          unit={unit}
-          onClose={() => setShowResults(false)}
-        />
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          
+          {/* Left Column: Input */}
+          <motion.div 
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.3 }}
+            className="space-y-6"
+          >
+            {/* Upload Area */}
+            <div 
+              className={cn(
+                "relative border-2 border-dashed rounded-2xl p-8 transition-all duration-200 ease-in-out flex flex-col items-center justify-center text-center min-h-[320px]",
+                isDragging ? "border-blue-500 bg-blue-50" : "border-slate-300 bg-white hover:border-slate-400 hover:bg-slate-50",
+                previewUrl ? "border-solid p-2" : ""
+              )}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              onClick={() => !previewUrl && fileInputRef.current?.click()}
+            >
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileChange}
+                accept="image/*"
+                className="hidden"
+              />
+              
+              <AnimatePresence mode="wait">
+                {previewUrl ? (
+                  <motion.div 
+                    key="preview"
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    className="relative w-full h-full rounded-xl overflow-hidden group"
+                  >
+                    <img 
+                      src={previewUrl} 
+                      alt="Preview" 
+                      className="w-full h-[400px] object-contain bg-slate-100"
+                    />
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          fileInputRef.current?.click();
+                        }}
+                        className="bg-white text-slate-900 px-4 py-2 rounded-lg font-medium shadow-sm hover:bg-slate-50 transition-colors flex items-center gap-2"
+                      >
+                        <RefreshCw className="w-4 h-4" /> Change Photo
+                      </button>
+                    </div>
+                  </motion.div>
+                ) : (
+                  <motion.div 
+                    key="upload-prompt"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="flex flex-col items-center cursor-pointer"
+                  >
+                    <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center text-slate-500 mb-4">
+                      <Upload className="w-8 h-8" />
+                    </div>
+                    <h3 className="text-lg font-semibold text-slate-900 mb-1">Upload a photo</h3>
+                    <p className="text-sm text-slate-500 mb-4">Drag and drop or click to browse</p>
+                    <div className="text-xs text-slate-400 flex items-center gap-1">
+                      <ImageIcon className="w-3 h-3" /> Supports JPG, PNG, WEBP
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            {/* Known Measurement Input */}
+            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+              <label htmlFor="known-measurement" className="block text-sm font-medium text-slate-700 mb-2">
+                Known Measurement (Optional)
+              </label>
+              <p className="text-xs text-slate-500 mb-3">
+                Provide one known measurement (e.g., "Face is 22cm" or "Height is 5ft 8in") for much higher accuracy.
+              </p>
+              <input
+                id="known-measurement"
+                type="text"
+                value={knownMeasurement}
+                onChange={(e) => setKnownMeasurement(e.target.value)}
+                placeholder="e.g., Face = 22cm"
+                className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+              />
+            </div>
+
+            {/* Action Button */}
+            <button
+              onClick={analyzeImage}
+              disabled={!file || loading}
+              className={cn(
+                "w-full py-4 px-6 rounded-xl font-semibold text-white shadow-sm transition-all flex items-center justify-center gap-2 text-lg",
+                !file || loading 
+                  ? "bg-slate-300 cursor-not-allowed" 
+                  : "bg-blue-600 hover:bg-blue-700 hover:shadow-md active:scale-[0.98]"
+              )}
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  Analyzing Photo...
+                </>
+              ) : (
+                <>
+                  <Ruler className="w-5 h-5" />
+                  Estimate Measurements
+                </>
+              )}
+            </button>
+
+            {error && (
+              <motion.div 
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                className="bg-red-50 text-red-700 p-4 rounded-xl flex items-start gap-3 text-sm border border-red-100"
+              >
+                <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
+                <p>{error}</p>
+              </motion.div>
+            )}
+          </motion.div>
+
+          {/* Right Column: Results */}
+          <motion.div 
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.4 }}
+            className="h-full"
+          >
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 lg:p-8 h-full min-h-[500px] flex flex-col">
+              <h2 className="text-xl font-bold text-slate-900 mb-6 flex items-center gap-2 border-b border-slate-100 pb-4">
+                <Ruler className="w-5 h-5 text-blue-600" />
+                Measurement Results
+              </h2>
+              
+              {loading ? (
+                <div className="flex-1 flex flex-col items-center justify-center text-slate-400 space-y-4">
+                  <Loader2 className="w-12 h-12 animate-spin text-blue-500" />
+                  <p className="text-sm font-medium animate-pulse">AI is analyzing body proportions...</p>
+                </div>
+              ) : result ? (
+                <motion.div 
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="flex-1 prose prose-slate max-w-none prose-p:leading-relaxed prose-headings:text-slate-900 prose-strong:text-slate-900"
+                >
+                  <ReactMarkdown>{result}</ReactMarkdown>
+                  
+                  <div className="mt-8 pt-6 border-t border-slate-100 flex justify-end">
+                    <button 
+                      onClick={reset}
+                      className="text-sm text-slate-500 hover:text-slate-800 font-medium transition-colors"
+                    >
+                      Start Over
+                    </button>
+                  </div>
+                </motion.div>
+              ) : (
+                <div className="flex-1 flex flex-col items-center justify-center text-slate-400 text-center px-4">
+                  <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mb-4">
+                    <Ruler className="w-10 h-10 text-slate-300" />
+                  </div>
+                  <p className="text-lg font-medium text-slate-600 mb-2">No results yet</p>
+                  <p className="text-sm max-w-[250px]">Upload a photo and click "Estimate Measurements" to see the analysis here.</p>
+                </div>
+              )}
+            </div>
+          </motion.div>
+
+        </div>
       </div>
     </div>
   );

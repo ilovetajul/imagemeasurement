@@ -1,5 +1,5 @@
 {
-  "name": "PhotoMeasure",
-  "description": "Measure real-world dimensions from uploaded images using a reference object for calibration.",
+  "name": "Body Measurement Assistant",
+  "description": "An AI-powered assistant that estimates body measurements from a photo using standard human proportion ratios.",
   "requestFramePermissions": []
 }
